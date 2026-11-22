@@ -1,0 +1,85 @@
+[paths]
+raw_dir = "data/raw"
+processed_dir = "data/processed"
+artifacts_dir = "artifacts"
+reports_dir = "reports"
+
+[data]
+seed = 13
+val_fraction = 0.12
+oos_train = 100
+oos_val = 100
+oos_test = 1000
+min_chars = 3
+max_chars = 400
+shingle_size = 4
+near_dup_jaccard = 0.9
+
+[tokenizer]
+vocab_size = 8000
+min_pair_freq = 2
+
+[screener]
+n_layer = 6
+n_head = 4
+d_model = 256
+d_ff = 704
+max_seq_len = 64
+dropout = 0.1
+rope_theta = 10000.0
+pretrain_epochs = 8
+pretrain_lr = 0.0006
+finetune_epochs = 12
+finetune_lr = 0.0004
+batch_size = 64
+weight_decay = 0.1
+grad_clip = 1.0
+warmup_ratio = 0.06
+label_smoothing = 0.05
+skip_pretrain = false
+device = "auto"
+threads = 0
+
+[resolver]
+base_model = "Qwen/Qwen2.5-0.5B-Instruct"
+lora_r = 16
+lora_alpha = 32
+lora_dropout = 0.05
+lora_targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+epochs = 2
+lr = 0.0002
+batch_size = 4
+grad_accum = 4
+max_len = 512
+max_new_tokens = 160
+infer_batch_size = 16
+train_subset = 0
+repair_attempts = 1
+device = "auto"
+dtype = "auto"
+
+[baselines]
+word_ngram_max = 2
+char_ngram_min = 3
+char_ngram_max = 5
+min_df = 2
+logreg_c = 4.0
+logreg_max_iter = 2000
+fewshot_examples = 8
+neighbours = 1
+
+[eval]
+calibration_bins = 15
+threshold_steps = 41
+latency_warmup = 5
+latency_samples = 300
+router_max_rows = 0
+resolver_eval_rows = 600
+
+[cost]
+frontier_input_usd_per_mtok = 3.0
+frontier_output_usd_per_mtok = 15.0
+frontier_prompt_tokens = 1400
+frontier_output_tokens = 60
+self_hosted_usd_per_hour = 0.35
+self_hosted_tickets_per_hour = 9000

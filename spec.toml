@@ -1,0 +1,170 @@
+[client]
+name = "Northgate Bank"
+process = "first line support ticket triage"
+tickets_per_day = 4200
+manual_minutes_per_ticket = 4.5
+agent_cost_per_hour_usd = 22.0
+
+[policy]
+auto_accuracy_floor = 0.95
+max_p95_latency_ms = 800
+screener_min_confidence = 0.90
+resolver_min_confidence = 0.70
+out_of_scope_label = "out_of_scope"
+out_of_scope_queue = "unsupported"
+
+[entities]
+types = ["amount", "currency", "card_last4", "date", "merchant"]
+
+[queues.cards_ops]
+team = "Cards Operations"
+priority = "P3"
+actions = ["create_case"]
+auto = true
+
+[queues.atm_cash]
+team = "ATM and Cash"
+priority = "P2"
+actions = ["create_case"]
+auto = true
+
+[queues.payments_disputes]
+team = "Payments Disputes"
+priority = "P2"
+actions = ["create_case"]
+auto = true
+
+[queues.transfers]
+team = "Transfers"
+priority = "P2"
+actions = ["create_case"]
+auto = true
+
+[queues.topups]
+team = "Top Ups"
+priority = "P3"
+actions = ["create_case"]
+auto = true
+
+[queues.fx_fees]
+team = "Pricing and FX"
+priority = "P4"
+actions = ["send_template_reply"]
+auto = true
+template = "fees_and_fx"
+
+[queues.product_info]
+team = "Product Support"
+priority = "P4"
+actions = ["send_template_reply"]
+auto = true
+template = "product_coverage"
+
+[queues.account_admin]
+team = "Account Administration"
+priority = "P3"
+actions = ["create_case"]
+auto = true
+
+[queues.account_access]
+team = "Account Access"
+priority = "P2"
+actions = ["send_reset_link"]
+auto = true
+
+[queues.identity_kyc]
+team = "Identity and KYC"
+priority = "P2"
+actions = ["escalate_to_human"]
+auto = false
+
+[queues.security_fraud]
+team = "Fraud and Security"
+priority = "P1"
+actions = ["freeze_card", "escalate_to_human"]
+auto = false
+
+[queues.unsupported]
+team = "General Support"
+priority = "P3"
+actions = ["escalate_to_human"]
+auto = false
+
+[intents]
+activate_my_card = "cards_ops"
+card_about_to_expire = "cards_ops"
+card_arrival = "cards_ops"
+card_delivery_estimate = "cards_ops"
+card_linking = "cards_ops"
+card_not_working = "cards_ops"
+contactless_not_working = "cards_ops"
+disposable_card_limits = "cards_ops"
+getting_spare_card = "cards_ops"
+getting_virtual_card = "cards_ops"
+get_disposable_virtual_card = "cards_ops"
+get_physical_card = "cards_ops"
+order_physical_card = "cards_ops"
+virtual_card_not_working = "cards_ops"
+atm_support = "atm_cash"
+card_swallowed = "atm_cash"
+cash_withdrawal_charge = "atm_cash"
+cash_withdrawal_not_recognised = "atm_cash"
+declined_cash_withdrawal = "atm_cash"
+pending_cash_withdrawal = "atm_cash"
+wrong_amount_of_cash_received = "atm_cash"
+card_payment_fee_charged = "payments_disputes"
+card_payment_not_recognised = "payments_disputes"
+declined_card_payment = "payments_disputes"
+direct_debit_payment_not_recognised = "payments_disputes"
+extra_charge_on_statement = "payments_disputes"
+pending_card_payment = "payments_disputes"
+request_refund = "payments_disputes"
+Refund_not_showing_up = "payments_disputes"
+"reverted_card_payment?" = "payments_disputes"
+transaction_charged_twice = "payments_disputes"
+balance_not_updated_after_bank_transfer = "transfers"
+balance_not_updated_after_cheque_or_cash_deposit = "transfers"
+beneficiary_not_allowed = "transfers"
+cancel_transfer = "transfers"
+declined_transfer = "transfers"
+failed_transfer = "transfers"
+pending_transfer = "transfers"
+receiving_money = "transfers"
+transfer_fee_charged = "transfers"
+transfer_into_account = "transfers"
+transfer_not_received_by_recipient = "transfers"
+transfer_timing = "transfers"
+automatic_top_up = "topups"
+pending_top_up = "topups"
+top_up_by_bank_transfer_charge = "topups"
+top_up_by_card_charge = "topups"
+top_up_by_cash_or_cheque = "topups"
+top_up_failed = "topups"
+top_up_limits = "topups"
+top_up_reverted = "topups"
+topping_up_by_card = "topups"
+verify_top_up = "topups"
+card_payment_wrong_exchange_rate = "fx_fees"
+exchange_charge = "fx_fees"
+exchange_rate = "fx_fees"
+exchange_via_app = "fx_fees"
+wrong_exchange_rate_for_cash_withdrawal = "fx_fees"
+apple_pay_or_google_pay = "product_info"
+card_acceptance = "product_info"
+country_support = "product_info"
+fiat_currency_support = "product_info"
+supported_cards_and_currencies = "product_info"
+visa_or_mastercard = "product_info"
+age_limit = "account_admin"
+edit_personal_details = "account_admin"
+terminate_account = "account_admin"
+change_pin = "account_access"
+passcode_forgotten = "account_access"
+pin_blocked = "account_access"
+unable_to_verify_identity = "identity_kyc"
+verify_my_identity = "identity_kyc"
+verify_source_of_funds = "identity_kyc"
+why_verify_identity = "identity_kyc"
+compromised_card = "security_fraud"
+lost_or_stolen_card = "security_fraud"
+lost_or_stolen_phone = "security_fraud"
