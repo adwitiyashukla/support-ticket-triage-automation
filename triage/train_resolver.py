@@ -2,6 +2,7 @@ import json
 import math
 import random
 import time
+from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
@@ -10,9 +11,21 @@ from .config import load_config, load_spec
 from .data import load_split
 from .metrics import accuracy
 from .prompts import build_messages, render_prompt, target_text
-from .resolver import ResolverModel, resolve_device, resolve_dtype
+from .resolver import ResolverModel, resolve_device
 
 IGNORE_INDEX = -100
+
+
+def autocast_dtype(device):
+    if device != "cuda":
+        return None
+    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+
+def autocast(device, dtype):
+    if dtype is None:
+        return nullcontext()
+    return torch.autocast(device_type=device, dtype=dtype)
 
 
 def build_examples(rows, tokenizer, spec, max_len):
@@ -49,14 +62,15 @@ def batch_loss(model, input_ids, attention, labels):
     return F.cross_entropy(shifted_logits, shifted_labels, ignore_index=IGNORE_INDEX)
 
 
-def evaluate_loss(model, examples, pad_id, batch_size, device):
+def evaluate_loss(model, examples, pad_id, batch_size, device, compute_dtype=None):
     model.eval()
     total, count = 0.0, 0
     with torch.no_grad():
         for start in range(0, len(examples), batch_size):
             chunk = examples[start:start + batch_size]
             input_ids, attention, labels = collate(chunk, pad_id)
-            loss = batch_loss(model, input_ids.to(device), attention.to(device), labels.to(device))
+            with autocast(device, compute_dtype):
+                loss = batch_loss(model, input_ids.to(device), attention.to(device), labels.to(device))
             total += float(loss) * len(chunk)
             count += len(chunk)
     return total / max(count, 1)
@@ -71,7 +85,7 @@ def train(config=None, spec=None, log=print):
     config.paths.ensure()
     settings = config.resolver
     device = resolve_device(settings.device)
-    dtype = resolve_dtype(settings.dtype, device)
+    compute_dtype = autocast_dtype(device)
     random.seed(config.data.seed)
     torch.manual_seed(config.data.seed)
 
@@ -91,7 +105,7 @@ def train(config=None, spec=None, log=print):
     val_examples = build_examples(val_rows[:400], tokenizer, spec, settings.max_len)
     log(f"resolver training examples {len(train_examples)} validation examples {len(val_examples)}")
 
-    model = AutoModelForCausalLM.from_pretrained(settings.base_model, torch_dtype=dtype)
+    model = AutoModelForCausalLM.from_pretrained(settings.base_model, torch_dtype=torch.float32)
     model.config.use_cache = False
     lora = LoraConfig(
         r=settings.lora_r,
@@ -105,12 +119,13 @@ def train(config=None, spec=None, log=print):
     model.to(device)
     trainable = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
     total = sum(parameter.numel() for parameter in model.parameters())
-    log(f"resolver base {settings.base_model} trainable {trainable:,} of {total:,} on {device}")
+    log(f"resolver base {settings.base_model} trainable {trainable:,} of {total:,} on {device} autocast {compute_dtype}")
 
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=settings.lr, weight_decay=0.0)
     steps_per_epoch = math.ceil(len(train_examples) / (settings.batch_size * settings.grad_accum))
     total_steps = max(1, steps_per_epoch * settings.epochs)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=settings.lr, total_steps=total_steps, pct_start=0.06, anneal_strategy="cos")
+    scaler = torch.amp.GradScaler(device, enabled=compute_dtype == torch.float16)
 
     history = []
     for epoch in range(settings.epochs):
@@ -122,20 +137,23 @@ def train(config=None, spec=None, log=print):
         for start in range(0, len(order), settings.batch_size):
             chunk = [train_examples[index] for index in order[start:start + settings.batch_size]]
             input_ids, attention, labels = collate(chunk, tokenizer.pad_token_id)
-            loss = batch_loss(model, input_ids.to(device), attention.to(device), labels.to(device))
-            (loss / settings.grad_accum).backward()
+            with autocast(device, compute_dtype):
+                loss = batch_loss(model, input_ids.to(device), attention.to(device), labels.to(device))
+            scaler.scale(loss / settings.grad_accum).backward()
             running += float(loss.detach()) * len(chunk)
             seen += len(chunk)
             micro += 1
             if micro % settings.grad_accum == 0:
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0)
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 optimizer.zero_grad(set_to_none=True)
                 if scheduler.last_epoch < total_steps - 1:
                     scheduler.step()
             if micro % (settings.grad_accum * 25) == 0:
                 log(f"resolver epoch {epoch + 1} example {seen}/{len(train_examples)} loss {running / max(seen, 1):.4f}")
-        validation = evaluate_loss(model, val_examples, tokenizer.pad_token_id, settings.batch_size, device)
+        validation = evaluate_loss(model, val_examples, tokenizer.pad_token_id, settings.batch_size, device, compute_dtype)
         entry = {"epoch": epoch + 1, "train_loss": round(running / max(seen, 1), 4), "val_loss": round(validation, 4)}
         history.append(entry)
         log(f"resolver epoch {entry['epoch']}/{settings.epochs} train loss {entry['train_loss']} val loss {entry['val_loss']}")
@@ -156,6 +174,7 @@ def train(config=None, spec=None, log=print):
     report = {
         "base_model": settings.base_model,
         "device": device,
+        "autocast": str(compute_dtype),
         "trainable_parameters": trainable,
         "total_parameters": total,
         "train_examples": len(train_examples),
