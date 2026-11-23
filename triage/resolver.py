@@ -109,8 +109,12 @@ class ResolverModel:
                 )
             prompt_length = batch["input_ids"].shape[1]
             sequences = generated.sequences[:, prompt_length:]
-            scores = torch.stack(generated.scores, dim=1).float().log_softmax(dim=-1)
-            chosen = scores.gather(2, sequences.unsqueeze(-1)).squeeze(-1)
+            steps = []
+            for position, step_scores in enumerate(generated.scores):
+                step_logprobs = step_scores.float().log_softmax(dim=-1)
+                picked = sequences[:, position].unsqueeze(-1)
+                steps.append(step_logprobs.gather(1, picked).squeeze(-1))
+            chosen = torch.stack(steps, dim=1).cpu()
             for row in range(sequences.shape[0]):
                 token_ids = sequences[row].tolist()
                 keep = []
