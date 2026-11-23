@@ -46,7 +46,7 @@ lora_r = 16
 lora_alpha = 32
 lora_dropout = 0.05
 lora_targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-epochs = 2
+epochs = 1
 lr = 0.0002
 batch_size = 4
 grad_accum = 4
@@ -57,6 +57,7 @@ train_subset = 0
 repair_attempts = 1
 device = "auto"
 dtype = "auto"
+autocast = "auto"
 
 [baselines]
 word_ngram_max = 2

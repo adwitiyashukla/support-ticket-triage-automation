@@ -16,10 +16,14 @@ from .resolver import ResolverModel, resolve_device
 IGNORE_INDEX = -100
 
 
-def autocast_dtype(device):
-    if device != "cuda":
+def autocast_dtype(device, requested="auto"):
+    if device != "cuda" or requested == "none":
         return None
-    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    if requested == "bfloat16":
+        return torch.bfloat16
+    if requested == "float16":
+        return torch.float16
+    return torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
 
 
 def autocast(device, dtype):
@@ -85,7 +89,7 @@ def train(config=None, spec=None, log=print):
     config.paths.ensure()
     settings = config.resolver
     device = resolve_device(settings.device)
-    compute_dtype = autocast_dtype(device)
+    compute_dtype = autocast_dtype(device, settings.autocast)
     random.seed(config.data.seed)
     torch.manual_seed(config.data.seed)
 

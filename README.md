@@ -6,9 +6,9 @@ Everything is driven by `spec.toml`. That file holds the intent list, which team
 
 ## The two models
 
-The screener is a decoder only transformer I wrote from scratch in PyTorch. RMSNorm, rotary position embeddings, SwiGLU, tied embeddings. It uses its own byte level BPE tokenizer, also written from scratch and trained on the ticket text. 5.7M parameters. First it is pretrained on the tickets with next token prediction, then fine tuned to pick one of 77 intents or say the ticket is out of scope. It answers in about 6 milliseconds on a CPU.
+The screener is a decoder only transformer I wrote from scratch in PyTorch. RMSNorm, rotary position embeddings, SwiGLU, tied embeddings. It uses its own byte level BPE tokenizer, also written from scratch and trained on the ticket text. 5.7M parameters. First it is pretrained on the tickets with next token prediction, then fine tuned to pick one of 77 intents or say the ticket is out of scope.
 
-The resolver is Qwen2.5-0.5B-Instruct post trained with LoRA. It returns one JSON object holding the intent, the entities it found, the action and a draft reply. It only sees the tickets the screener is unsure about.
+The resolver is Qwen2.5-0.5B-Instruct post trained with LoRA, 8.8M trainable parameters out of 502.8M. It returns one JSON object holding the intent, the entities it found, the action and a draft reply. It only sees the tickets the screener is unsure about.
 
 If neither model is confident enough, the ticket goes to a person.
 
@@ -16,7 +16,7 @@ If neither model is confident enough, the ticket goes to a person.
 
 The model never picks the queue or the action. It picks the intent, and `spec.toml` turns that into a queue, a priority and the actions that queue is allowed to run. Two queues are marked as never automatic. Identity checks always go to a person. Fraud freezes the card straight away and then goes to a person.
 
-The action the resolver writes is checked against the actions the policy allows, and the policy wins. Every executed action goes into an audit log with the confidence and the model that decided it. Tools are idempotent per ticket, so replaying a ticket does not open a second case.
+The action the resolver writes is checked against the actions the policy allows, and the policy wins. Across the whole test run the two agreed 100 percent of the time, so the check never had to override the model, but it is there for when it does. Every executed action goes into an audit log with the confidence and the model that decided it. Tools are idempotent per ticket, so replaying a ticket does not open a second case.
 
 ## Data
 
@@ -28,6 +28,8 @@ The tokenizer ends up with 3,425 tokens from 3,166 merges. On held out tickets t
 
 ## Results
 
+Everything below was measured on a Kaggle T4. The screener trained in 118 seconds, the resolver in 28 minutes for one epoch.
+
 Test set, 4,078 rows.
 
 | model | accuracy | macro F1 |
@@ -35,46 +37,40 @@ Test set, 4,078 rows.
 | majority class | 0.98% | 0.02% |
 | TF-IDF nearest neighbour | 65.11% | 70.16% |
 | TF-IDF and logistic regression | 87.54% | 87.99% |
-| screener, trained from scratch | **89.68%** | **87.86%** |
+| screener, trained from scratch | **87.59%** | **87.04%** |
 
-The 95 percent bootstrap interval on screener accuracy is 88.67 to 90.55.
+The classical baseline is right behind a transformer I wrote from scratch, which is worth knowing before anyone reaches for a model.
 
-Out of scope detection is the part I care about most, because that is where a wrong automatic answer costs the client. Recall 93.49 percent, precision 98.00 percent, AUROC 0.9978.
+Out of scope detection is the part I care about most, because that is where a wrong automatic answer costs the client. AUROC 0.9954.
 
-Calibration matters too, since the routing threshold is only meaningful if the confidence means something. Temperature scaling fitted on validation gives T = 0.96 and expected calibration error of 0.0225 on test.
+Calibration matters too, since the routing threshold is only meaningful if the confidence means something. Expected calibration error is 0.0284 after temperature scaling fitted on validation.
 
-Speed on two CPU cores: 247 tickets per second batched, and 5.6 ms median for a single ticket with 8.2 ms at p95. The client budget is 800 ms.
+The threshold sweep picks 0.925 as the lowest confidence gate that holds the client's 95 percent floor. At that gate the screener alone handles 57.75 percent of the queue at 95.97 percent accuracy.
 
-## Does pretraining from scratch help
+## What the resolver adds
 
-Same model, same data, same 12 fine tuning epochs. The only difference is whether the 8 epochs of next token pretraining on the ticket corpus happen first.
+Routing every deferred ticket to the resolver, measured on 1,500 test tickets:
 
-| run | validation accuracy | calibration error |
+| setup | share handled with no person | accuracy on those |
 | --- | --- | --- |
-| pretrain then fine tune | **89.56%** | 0.0313 |
-| fine tune only | 87.69% | 0.0431 |
+| screener alone at its chosen gate | 57.75% | 95.97% |
+| screener plus resolver | **68.67%** | 90.68% |
 
-Worth 1.87 points and a better calibrated model, on a corpus of only about 140,000 tokens.
+So the resolver buys about 11 points of extra coverage and gives up more accuracy than the spec allows. The client floor is 95 percent and this setup lands at 90.68, which means at this spec the resolver's answers go to a person for review rather than straight through, or its confidence gate moves well above the 0.70 in `spec.toml`.
 
-## How much of the queue it takes over
+The resolver itself is solid on its own terms. It produced valid JSON on 98.44 percent of a validation sample, needed zero repair attempts across 271 calls in the test run, and its intent accuracy on that sample was 87.3 percent. The tickets it sees are the ones the screener could not call, so its share of the blended number is doing the hard part.
 
-The threshold sweep is the part a client actually buys. Higher threshold means fewer tickets handled without a person, but higher accuracy on the ones that are.
+Latency splits the same way. A ticket the screener answers takes 6.8 ms at the median. A ticket that reaches the resolver takes about 2.5 seconds, so p95 across the mix is 2,486 ms against the client's 800 ms budget. The cheap tier is inside the budget and the expensive one is not, which is the tradeoff you take on when a 0.5B model joins the path.
 
-| confidence threshold | tickets handled with no person | accuracy on those |
-| --- | --- | --- |
-| 0.50 | 66.38% | 90.54% |
-| 0.75 | 61.99% | 93.71% |
-| 0.85 | 59.37% | 94.84% |
-| 0.90 | 56.55% | 96.27% |
-| 0.95 | 49.22% | 97.76% |
+## Cost
 
-The spec asks for 95 percent accuracy on anything handled automatically. At the 0.90 threshold in `spec.toml`, the screener alone clears that with 56.55 percent of the queue taken over at 96.27 percent accuracy. Another 1,240 tickets are pushed to a person because their queue is not allowed to be automatic, which is the policy doing its job rather than the model failing.
+Using the client numbers in `spec.toml`, 4,200 tickets a day at 4.5 minutes each is 315 agent hours a day. Taking over 68.67 percent of that removes 216 hours a day. Compute costs about half a cent per 1,000 tickets. Sending the same tickets to a frontier API with the full taxonomy in the prompt would cost about 5.10 dollars per 1,000 tickets at 3 and 15 dollars per million tokens, which is the assumption sitting in `config.toml` rather than a quote. The fine tuned resolver needs 52.8 prompt tokens per ticket because the taxonomy lives in its weights instead of the prompt.
 
-Using the client numbers in `spec.toml`, 4,200 tickets a day at 4.5 minutes each is 315 agent hours a day. Taking over 56.55 percent of that removes 178 hours a day. Compute for the screener path costs about 0.04 cents per 1,000 tickets. Sending the same tickets to a frontier API with the full taxonomy in the prompt would cost about 5.10 dollars per 1,000 tickets at 3 and 15 dollars per million tokens, which is the assumption sitting in `config.toml` rather than a quote.
+## The same thing on a laptop CPU
 
-## Which intents it mixes up
+I also ran the screener path end to end on my own laptop, an Intel Core 5 120U with no GPU. Training took 94 minutes there against 118 seconds on the T4. Serving is the interesting part: 108 tickets per second batched, 21.9 ms median for a single ticket and 29.5 ms at p95, which is well inside the client budget.
 
-The confusions are the pairs a new human agent would also mix up. why_verify_identity against verify_my_identity 11 times, pending_transfer against failed_transfer 6 times, fiat_currency_support against exchange_via_app 6 times. Those three intents have the lowest F1 in the whole taxonomy.
+That run scored 85.73 percent on the test set against 87.59 on the T4, same config and same seed. Floating point reduction order changes with thread count, so expect a point or two of spread between machines.
 
 ## Running it
 
@@ -86,7 +82,7 @@ python -m triage baselines
 python -m triage evaluate
 ```
 
-Screener training takes about 26 minutes on two CPU cores and much less on a GPU. The resolver wants a GPU:
+The resolver wants a GPU:
 
 ```
 python -m triage train-resolver

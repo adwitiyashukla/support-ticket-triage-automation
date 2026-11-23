@@ -106,6 +106,7 @@ class ResolverConfig:
     repair_attempts: int
     device: str
     dtype: str
+    autocast: str
 
 
 @dataclass(frozen=True)
@@ -284,8 +285,10 @@ def load_config(path=None):
         repair_attempts=_non_negative_int(o["repair_attempts"], "resolver.repair_attempts"),
         device=str(o["device"]),
         dtype=str(o["dtype"]),
+        autocast=str(o["autocast"]),
     )
     _check(len(resolver.lora_targets) > 0, "resolver.lora_targets must not be empty")
+    _check(resolver.autocast in {"auto", "bfloat16", "float16", "none"}, "resolver.autocast must be auto, bfloat16, float16 or none")
     _check(0.0 <= resolver.lora_dropout < 1.0, "resolver.lora_dropout must be in [0, 1)")
 
     b = raw["baselines"]
